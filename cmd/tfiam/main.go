@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -15,7 +16,7 @@ type Perms struct {
 	Resource map[string][]string `json:"resource"`
 }
 
-func getFile() *Perms {
+func getPolicies() *Perms {
 	resp, err := http.Get("https://amurtra.s3.eu-west-1.amazonaws.com/permissions.json")
 	if err != nil {
 		log.Fatalln(err)
@@ -32,61 +33,39 @@ func getFile() *Perms {
 	return p
 }
 
-func unique(stringSlice []string) []string {
-	keys := make(map[string]bool)
-	list := []string{}
-	for _, entry := range stringSlice {
-		if _, value := keys[entry]; !value {
-			keys[entry] = true
-			list = append(list, entry)
-		}
-	}
-	return list
-}
-
-func getResources(files []string) []string {
+func findTerraformVerb(files []string, verb string) []string {
 	res := []string{}
 	for _, file := range files {
-		resources := filesmanagement.FindInFile(file, "^resource")
-		for _, resource := range resources {
-			res = append(res, filesmanagement.ExtractValueRegex(resource, "^resource \"([a-zA-Z0-9-_]*)\" \".*$", "$1"))
-		}
-	}
-	return unique(res)
-}
-
-func getDatas(files []string) []string {
-	res := []string{}
-	for _, file := range files {
-		datas := filesmanagement.FindInFile(file, "^data")
+		datas := filesmanagement.FindInFile(file, fmt.Sprintf("^%s", verb))
 		for _, data := range datas {
-			res = append(res, filesmanagement.ExtractValueRegex(data, "^data \"([a-zA-Z0-9-_]*)\" \".*$", "$1"))
+			res = append(res, filesmanagement.ExtractValueRegex(data, fmt.Sprintf("^%s \"([a-zA-Z0-9-_]*)\" \".*$", verb), "$1"))
 		}
 	}
 	return unique(res)
 }
 
 func main() {
-	log.Println("Hello world")
-	policies := getFile()
+	policies := getPolicies()
 
 	tffiles := filesmanagement.ApplyFilter(filesmanagement.ListFiles("."), ".*\\.tf$")
 
 	permissions := []string{}
 
-	resources := getResources(tffiles)
+	resources := findTerraformVerb(tffiles, "resource")
 	for _, resource := range resources {
 		for _, perm := range policies.Resource[resource] {
 			permissions = append(permissions, perm)
 		}
 	}
 
-	datas := getDatas(tffiles)
+	datas := findTerraformVerb(tffiles, "data")
 	for _, data := range datas {
 		for _, perm := range policies.Data[data] {
 			permissions = append(permissions, perm)
 		}
 	}
 
-	log.Println(permissions)
+	policyjson, _ := json.Marshal(generateAWSPolicy(permissions))
+
+	fmt.Println(string(policyjson))
 }
