@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"strings"
 	"net/http"
 
 	"github.com/alemuro/tfiam/pkg/filesmanagement"
@@ -48,6 +49,17 @@ func main() {
 	policies := getPolicies()
 
 	tffiles := filesmanagement.ApplyFilter(filesmanagement.ListFiles("."), ".*\\.tf$")
+
+	// Follow local module paths
+	for _, tf := range tffiles {
+		modules := filesmanagement.FindInFile(tf, `source\s*=\s*"([^"]*)"`)
+		for _, m := range modules {
+			src := filesmanagement.ExtractValueRegex(m, `source\s*=\s*"([^"]*)"`, "$1")
+			if strings.HasPrefix(src, "./") || strings.HasPrefix(src, "../") || (!strings.Contains(src, ":") && !strings.HasPrefix(src, "http")) {
+				tffiles = append(tffiles, filesmanagement.ApplyFilter(filesmanagement.ListFiles(src), ".*\\.tf$")...)
+			}
+		}
+	}
 
 	permissions := []string{}
 
